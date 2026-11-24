@@ -1,5 +1,5 @@
 name: go2rtc UniFi Talkback
-version: "0.1.2"
+version: "0.2.0"
 slug: go2rtc_unifi
 description: Separate go2rtc built from unreleased pull request 2340 for live two way audio to UniFi Protect camera speakers
 url: https://github.com/AlexxIT/go2rtc/pull/2340
@@ -9,14 +9,14 @@ arch:
 init: false
 startup: application
 boot: manual
+ingress: true
+ingress_port: 1984
+ingress_entry: /webrtc.html?src=doorbell&media=microphone
+panel_admin: false
 ports:
-  1984/tcp: 1984
-  8554/tcp: 8554
   8555/tcp: 8555
   8555/udp: 8555
 ports_description:
-  1984/tcp: go2rtc web interface and API
-  8554/tcp: RTSP
   8555/tcp: WebRTC
   8555/udp: WebRTC
 options:
@@ -26,6 +26,9 @@ options:
   camera_name: ""
   rtsp_alias: ""
   stream_name: doorbell
+  candidates:
+    - 192.168.1.241:8555
+    - 100.111.211.98:8555
 schema:
   console_host: str
   api_key: password
@@ -33,3 +36,5 @@ schema:
   camera_name: str?
   rtsp_alias: str?
   stream_name: str
+  candidates:
+    - str

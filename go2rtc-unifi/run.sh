@@ -8,6 +8,7 @@ CNAME=$(jq -r .camera_name "$O")
 [ "$CNAME" = "null" ] && CNAME=""
 ALIAS=$(jq -r .rtsp_alias "$O")
 NAME=$(jq -r .stream_name "$O")
+CANDS=$(jq -r '.candidates[]? | "    - \(.)"' "$O")
 
 if [ -z "$HOST" ] || [ -z "$KEY" ]; then
   echo "Set console_host and api_key in the add-on configuration first."
@@ -37,10 +38,13 @@ fi
 cat <<YAML
 api:
   listen: ":1984"
+  origin: "*"
 rtsp:
-  listen: ":8554"
+  listen: ""
 webrtc:
   listen: ":8555"
+  candidates:
+${CANDS}
 streams:
   ${NAME}:
 YAML
