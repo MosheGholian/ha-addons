@@ -1,4 +1,4 @@
-import asyncio, base64, hashlib, json, os, ssl, struct, sys, urllib.request
+import asyncio, base64, hashlib, json, os, re, ssl, struct, sys, urllib.parse, urllib.request
 
 OPTS = {}
 try:
@@ -29,8 +29,13 @@ def log(*a):
     print(msg, flush=True)
 
 
-def protect(method, path):
-    req = urllib.request.Request(BASE + path, method=method, headers={"X-API-KEY": KEY, "Accept": "application/json"})
+def protect(method, path, body=None):
+    hdrs = {"X-API-KEY": KEY, "Accept": "application/json"}
+    data = None
+    if body is not None:
+        data = json.dumps(body).encode()
+        hdrs["Content-Type"] = "application/json"
+    req = urllib.request.Request(BASE + path, method=method, data=data, headers=hdrs)
     try:
         with urllib.request.urlopen(req, timeout=15, context=CTX) as r:
             body = r.read()
@@ -58,6 +63,100 @@ def resolve_camera():
     for c in cams:
         log("  name: %s   id: %s" % (c.get("name"), c.get("id")))
     raise RuntimeError("Set camera_name or camera_id in the add-on configuration")
+
+
+def listen_url(cam):
+    cam = (cam or CAM or "").strip()
+    if not cam:
+        resolve_camera()
+        cam = CAM
+    elif not re.fullmatch(r"[0-9a-fA-F]{16,40}", cam):
+        raise RuntimeError("Bad camera id")
+    qs = {}
+    try:
+        qs = protect("GET", "/%s/rtsps-stream" % cam)
+    except Exception:
+        qs = {}
+    if not isinstance(qs, dict) or not any(qs.get(k) for k in ("low", "medium", "high")):
+        qs = protect("POST", "/%s/rtsps-stream" % cam, {"qualities": ["low"]})
+    for k in ("low", "medium", "high"):
+        if isinstance(qs, dict) and qs.get(k):
+            return str(qs[k]).split("?")[0]
+    raise RuntimeError("Protect did not provide a stream for that camera")
+
+
+async def listen(reader, writer, cam):
+    proc = None
+    url = ""
+    total = 0
+    try:
+        url = await asyncio.get_running_loop().run_in_executor(None, lambda: listen_url(cam))
+        SECRETS.append(url)
+        args = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-fflags", "nobuffer", "-flags", "low_delay",
+                "-probesize", "65536", "-analyzeduration", "1000000", "-rtsp_transport", "tcp", "-i", url,
+                "-vn", "-ac", "1", "-ar", "16000", "-f", "s16le", "pipe:1"]
+        proc = await asyncio.create_subprocess_exec(*args, stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+
+        async def drain():
+            while True:
+                line = await proc.stderr.readline()
+                if not line:
+                    return
+                log("ffmpeg listen:", line.decode(errors="replace").strip())
+
+        asyncio.ensure_future(drain())
+        log("Listen started")
+        await send_json(writer, {"type": "ready", "rate": 16000})
+
+        async def pump():
+            nonlocal total
+            while True:
+                chunk = await proc.stdout.read(3200)
+                if not chunk:
+                    raise RuntimeError("The camera stream has no audio or stopped")
+                total += len(chunk)
+                writer.write(frame(0x2, chunk))
+                await writer.drain()
+
+        async def watch():
+            while True:
+                fin, op, data = await read_frame(reader)
+                if op == 0x8:
+                    return
+                if op == 0x9:
+                    writer.write(frame(0xA, data))
+                    await writer.drain()
+
+        tasks = [asyncio.ensure_future(pump()), asyncio.ensure_future(watch())]
+        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        for t in pending:
+            t.cancel()
+        for t in done:
+            exc = t.exception()
+            if exc:
+                raise exc
+    except (asyncio.IncompleteReadError, ConnectionError, BrokenPipeError):
+        pass
+    except Exception as e:
+        log("Listen error:", e)
+        try:
+            await send_json(writer, {"type": "error", "value": str(e)})
+        except Exception:
+            pass
+    finally:
+        if proc and proc.returncode is None:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+        if url and url in SECRETS:
+            SECRETS.remove(url)
+        log("Listen ended after", total, "bytes of audio")
+        try:
+            writer.write(frame(0x8))
+            await writer.drain()
+        except Exception:
+            pass
 
 
 ENCODERS = {
@@ -193,6 +292,12 @@ async def handle(reader, writer):
             writer.write(("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: %s\r\n\r\n" % acc).encode())
             await writer.drain()
             await talk(reader, writer)
+        elif path.split("?")[0].rstrip("/") == "/listen" and hdrs.get("upgrade", "").lower() == "websocket":
+            q = urllib.parse.parse_qs(urllib.parse.urlsplit(path).query)
+            acc = base64.b64encode(hashlib.sha1((hdrs["sec-websocket-key"] + GUID).encode()).digest()).decode()
+            writer.write(("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: %s\r\n\r\n" % acc).encode())
+            await writer.drain()
+            await listen(reader, writer, (q.get("cam") or [""])[0])
         else:
             body = b"UniFi talkback relay is running."
             writer.write(b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %d\r\n\r\n" % len(body) + body)

@@ -1,5 +1,5 @@
 name: UniFi Talkback Relay
-version: "0.3.0"
+version: "0.4.0"
 slug: go2rtc_unifi
 description: Lets a Home Assistant dashboard talk through a UniFi Protect camera speaker over the normal secure Home Assistant address
 url: https://github.com/MosheGholian/ha-addons
