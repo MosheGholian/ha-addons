@@ -1,5 +1,5 @@
 name: go2rtc UniFi Talkback
-version: "0.1.1"
+version: "0.1.2"
 slug: go2rtc_unifi
 description: Separate go2rtc built from unreleased pull request 2340 for live two way audio to UniFi Protect camera speakers
 url: https://github.com/AlexxIT/go2rtc/pull/2340
@@ -23,11 +23,13 @@ options:
   console_host: ""
   api_key: ""
   camera_id: ""
+  camera_name: ""
   rtsp_alias: ""
   stream_name: doorbell
 schema:
   console_host: str
   api_key: password
-  camera_id: str
+  camera_id: str?
+  camera_name: str?
   rtsp_alias: str?
   stream_name: str

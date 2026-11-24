@@ -10,7 +10,7 @@ RUN git init -q . \
 RUN CGO_ENABLED=0 go build -ldflags "-s -w" -trimpath -o /go2rtc .
 
 FROM alpine:3
-RUN apk add --no-cache ffmpeg jq ca-certificates tzdata
+RUN apk add --no-cache ffmpeg jq curl ca-certificates tzdata
 COPY --from=build /go2rtc /usr/local/bin/go2rtc
 COPY run.sh /run.sh
 RUN chmod +x /run.sh
